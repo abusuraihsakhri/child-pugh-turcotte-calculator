@@ -1,173 +1,133 @@
 #!/usr/bin/env python3
-"""
-Child-Pugh-Turcotte (CPT) Score for Liver Disease Severity
+"""Child-Pugh-Turcotte score calculator with optional legacy MELD (2001)."""
 
-Calculates the Child-Pugh score (5-15) and classification (A, B, C) for
-chronic liver disease / cirrhosis severity assessment. Also computes MELD
-score for transplant prioritization comparison.
-
-Parameters:
-  - Bilirubin (mg/dL)
-  - Albumin (g/dL)
-  - INR
-  - Ascites (none / mild-controlled / moderate-severe)
-  - Encephalopathy (none / grade I-II / grade III-IV)
-
-Scoring:
-  Each parameter is scored 1, 2, or 3 points.
-  Total 5-15: Class A (5-6), Class B (7-9), Class C (10-15)
-
-MELD formula:
-  MELD = 3.78 * ln(bilirubin) + 11.2 * ln(INR) + 9.57 * ln(creatinine) + 6.43
-
-Zero-dependency Python implementation.
-License: MIT
-"""
+from __future__ import annotations
 
 import argparse
 import csv
 import json
 import math
-import sys
-from typing import Dict, Any, Optional
+from pathlib import Path
+from typing import Any, Dict, Optional
 
 
-# ---------------------------------------------------------------------------
-# Scoring helpers
-# ---------------------------------------------------------------------------
+def _finite_number(name: str, value: float, *, allow_zero: bool = False) -> float:
+    value = float(value)
+    if not math.isfinite(value):
+        raise ValueError(f"{name} must be a finite number")
+    if value < 0 or (value == 0 and not allow_zero):
+        qualifier = "non-negative" if allow_zero else "greater than zero"
+        raise ValueError(f"{name} must be {qualifier}")
+    return value
+
 
 def _score_bilirubin(bilirubin_mg_dl: float) -> int:
-    """Bilirubin (mg/dL): <2 → 1, 2-3 → 2, >3 → 3"""
     if bilirubin_mg_dl < 2.0:
         return 1
-    elif bilirubin_mg_dl <= 3.0:
+    if bilirubin_mg_dl <= 3.0:
         return 2
-    else:
-        return 3
+    return 3
 
 
 def _score_albumin(albumin_g_dl: float) -> int:
-    """Albumin (g/dL): >3.5 → 1, 2.8-3.5 → 2, <2.8 → 3"""
     if albumin_g_dl > 3.5:
         return 1
-    elif albumin_g_dl >= 2.8:
+    if albumin_g_dl >= 2.8:
         return 2
-    else:
-        return 3
+    return 3
 
 
 def _score_inr(inr: float) -> int:
-    """INR: <1.7 → 1, 1.7-2.3 → 2, >2.3 → 3"""
     if inr < 1.7:
         return 1
-    elif inr <= 2.3:
+    if inr <= 2.3:
         return 2
-    else:
-        return 3
+    return 3
+
+
+def _normalized(value: str) -> str:
+    return " ".join(value.strip().lower().replace("-", " ").replace("_", " ").replace("/", " ").split())
 
 
 def _score_ascites(ascites: str) -> int:
-    """Ascites: none → 1, mild/controlled → 2, moderate-severe → 3"""
-    ascites_lower = ascites.strip().lower().replace("-", " ").replace("_", " ")
-    if ascites_lower in ("none", "no", "absent", "0"):
+    value = _normalized(ascites)
+    if value in {"none", "no", "absent", "0"}:
         return 1
-    elif ascites_lower in ("mild", "controlled", "mild controlled", "mild/controlled",
-                            "slight", "1", "diuretic responsive"):
+    if value in {"mild", "controlled", "mild controlled", "slight", "1", "diuretic responsive"}:
         return 2
-    elif ascites_lower in ("moderate", "severe", "moderate severe", "moderate/severe",
-                            "moderate to severe", "refractory", "2", "3"):
+    if value in {"moderate", "severe", "moderate severe", "moderate to severe", "refractory", "2", "3"}:
         return 3
-    else:
-        raise ValueError(
-            f"Invalid ascites value '{ascites}'. "
-            "Use: none, mild/controlled, or moderate-severe"
-        )
+    raise ValueError("Ascites must be none, mild/controlled, or moderate-severe")
 
 
 def _score_encephalopathy(encephalopathy: str) -> int:
-    """Encephalopathy: none → 1, grade I-II → 2, grade III-IV → 3"""
-    enc_lower = encephalopathy.strip().lower().replace("-", " ").replace("_", " ")
-    if enc_lower in ("none", "no", "absent", "0", "grade 0"):
+    value = _normalized(encephalopathy)
+    if value in {"none", "no", "absent", "0", "grade 0"}:
         return 1
-    elif enc_lower in ("grade i ii", "grade 1 2", "grade i-ii", "grade 1-2",
-                        "i ii", "1 2", "grade i", "grade ii", "grade 1", "grade 2",
-                        "minimal", "mild", "moderate"):
+    if value in {"grade i ii", "grade 1 2", "i ii", "1 2", "grade i", "grade ii", "grade 1", "grade 2", "minimal", "mild", "moderate"}:
         return 2
-    elif enc_lower in ("grade iii iv", "grade 3 4", "grade iii-iv", "grade 3-4",
-                        "iii iv", "3 4", "grade iii", "grade iv", "grade 3", "grade 4",
-                        "severe", "coma"):
+    if value in {"grade iii iv", "grade 3 4", "iii iv", "3 4", "grade iii", "grade iv", "grade 3", "grade 4", "severe", "coma"}:
         return 3
-    else:
-        raise ValueError(
-            f"Invalid encephalopathy value '{encephalopathy}'. "
-            "Use: none, grade I-II, or grade III-IV"
-        )
+    raise ValueError("Encephalopathy must be none, grade I-II, or grade III-IV")
 
 
 def _child_pugh_class(total_score: int) -> str:
-    """Classify total Child-Pugh score."""
     if total_score <= 6:
         return "A"
-    elif total_score <= 9:
+    if total_score <= 9:
         return "B"
-    else:
-        return "C"
+    return "C"
 
 
-def _class_description(cls: str) -> str:
-    """Return clinical description for Child-Pugh class."""
-    descriptions = {
-        "A": "Well-compensated liver disease",
-        "B": "Significant functional compromise",
-        "C": "Decompensated liver disease",
-    }
-    return descriptions[cls]
+def _class_description(child_class: str) -> str:
+    return {
+        "A": "Lower Child-Pugh severity class",
+        "B": "Intermediate Child-Pugh severity class",
+        "C": "Higher Child-Pugh severity class",
+    }[child_class]
 
 
-def _one_year_survival(cls: str) -> float:
-    """Approximate 1-year survival by Child-Pugh class (%)."""
-    return {"A": 100.0, "B": 80.0, "C": 45.0}[cls]
+def _one_year_survival(child_class: str) -> float:
+    """Legacy class-level estimate retained for API compatibility; not patient-specific."""
+    return {"A": 100.0, "B": 80.0, "C": 45.0}[child_class]
 
 
-# ---------------------------------------------------------------------------
-# MELD score calculation
-# ---------------------------------------------------------------------------
+def calculate_meld(
+    bilirubin_mg_dl: float,
+    inr: float,
+    creatinine_mg_dl: float,
+    dialysis: bool = False,
+) -> Dict[str, Any]:
+    """Calculate the legacy 2001 MELD score, not the current OPTN allocation MELD."""
+    bilirubin_mg_dl = _finite_number("Bilirubin", bilirubin_mg_dl, allow_zero=False)
+    inr = _finite_number("INR", inr, allow_zero=False)
+    creatinine_mg_dl = _finite_number("Creatinine", creatinine_mg_dl, allow_zero=False)
 
-def calculate_meld(bilirubin_mg_dl: float, inr: float, creatinine_mg_dl: float) -> Dict[str, Any]:
-    """
-    Calculate MELD (Model for End-Stage Liver Disease) score.
-
-    MELD = 3.78 * ln(bilirubin) + 11.2 * ln(INR) + 9.57 * ln(creatinine) + 6.43
-
-    Values are floored at 1.0 per MELD convention. Final score capped at 40.
-    """
-    # Floor at 1.0 per standard MELD rules
     bili = max(bilirubin_mg_dl, 1.0)
-    inr_val = max(inr, 1.0)
-    creat = max(creatinine_mg_dl, 1.0)
+    inr_used = max(inr, 1.0)
+    creat_used = 4.0 if dialysis else min(max(creatinine_mg_dl, 1.0), 4.0)
 
-    raw = (3.78 * math.log(bili)
-           + 11.2 * math.log(inr_val)
-           + 9.57 * math.log(creat)
-           + 6.43)
-
-    meld = min(int(round(raw)), 40)
-    meld = max(meld, 6)  # minimum MELD is 6
+    raw = (
+        3.78 * math.log(bili)
+        + 11.2 * math.log(inr_used)
+        + 9.57 * math.log(creat_used)
+        + 6.43
+    )
+    score = max(6, min(int(round(raw)), 40))
 
     return {
-        "meld_score": meld,
+        "meld_score": score,
         "meld_raw": round(raw, 2),
-        "meld_components": {
-            "bilirubin": bilirubin_mg_dl,
-            "inr": inr,
-            "creatinine": creatinine_mg_dl,
+        "formula": "legacy MELD (2001)",
+        "allocation_use": False,
+        "components_used": {
+            "bilirubin_mg_dl": bili,
+            "inr": inr_used,
+            "creatinine_mg_dl": creat_used,
+            "dialysis": bool(dialysis),
         },
     }
 
-
-# ---------------------------------------------------------------------------
-# Main calculation
-# ---------------------------------------------------------------------------
 
 def calculate_child_pugh(
     bilirubin: float,
@@ -176,185 +136,158 @@ def calculate_child_pugh(
     ascites: str,
     encephalopathy: str,
     creatinine: Optional[float] = None,
+    dialysis: bool = False,
 ) -> Dict[str, Any]:
-    """
-    Calculate Child-Pugh-Turcotte score and classification.
+    """Calculate the conventional five-component Child-Pugh score and class."""
+    bilirubin = _finite_number("Bilirubin", bilirubin, allow_zero=True)
+    albumin = _finite_number("Albumin", albumin, allow_zero=False)
+    inr = _finite_number("INR", inr, allow_zero=False)
+    if creatinine is not None:
+        creatinine = _finite_number("Creatinine", creatinine, allow_zero=False)
 
-    Parameters:
-        bilirubin: Serum bilirubin in mg/dL
-        albumin: Serum albumin in g/dL
-        inr: International Normalized Ratio
-        ascites: 'none', 'mild/controlled', or 'moderate-severe'
-        encephalopathy: 'none', 'grade I-II', or 'grade III-IV'
-        creatinine: Serum creatinine in mg/dL (optional, for MELD calculation)
-
-    Returns:
-        Dict with scores, class, survival estimates, and MELD comparison.
-    """
-    # Validate inputs
-    if bilirubin < 0:
-        raise ValueError("Bilirubin must be non-negative")
-    if albumin < 0:
-        raise ValueError("Albumin must be non-negative")
-    if inr < 0:
-        raise ValueError("INR must be non-negative")
-
-    # Score each component
-    s_bili = _score_bilirubin(bilirubin)
-    s_alb = _score_albumin(albumin)
-    s_inr = _score_inr(inr)
-    s_asc = _score_ascites(ascites)
-    s_enc = _score_encephalopathy(encephalopathy)
-
-    total = s_bili + s_alb + s_inr + s_asc + s_enc
+    scores = {
+        "bilirubin": _score_bilirubin(bilirubin),
+        "albumin": _score_albumin(albumin),
+        "inr": _score_inr(inr),
+        "ascites": _score_ascites(ascites),
+        "encephalopathy": _score_encephalopathy(encephalopathy),
+    }
+    total = sum(scores.values())
     child_class = _child_pugh_class(total)
 
-    result = {
+    result: Dict[str, Any] = {
         "tool": "child-pugh-turcotte-calculator",
         "child_pugh_score": total,
         "child_pugh_class": child_class,
         "class_description": _class_description(child_class),
         "one_year_survival_pct": _one_year_survival(child_class),
+        "survival_note": "Legacy class-level estimate; not an individualized prognosis.",
         "component_scores": {
-            "bilirubin": {"value_mg_dl": bilirubin, "points": s_bili},
-            "albumin": {"value_g_dl": albumin, "points": s_alb},
-            "inr": {"value": inr, "points": s_inr},
-            "ascites": {"value": ascites, "points": s_asc},
-            "encephalopathy": {"value": encephalopathy, "points": s_enc},
+            "bilirubin": {"value_mg_dl": bilirubin, "points": scores["bilirubin"]},
+            "albumin": {"value_g_dl": albumin, "points": scores["albumin"]},
+            "inr": {"value": inr, "points": scores["inr"]},
+            "ascites": {"value": ascites, "points": scores["ascites"]},
+            "encephalopathy": {"value": encephalopathy, "points": scores["encephalopathy"]},
         },
         "classification": f"Child-Pugh {child_class} ({total}/15)",
-        "clinical_recommendation": _recommendation(child_class, total),
+        "interpretation": "Reference calculation only; clinical decisions require full patient context.",
     }
 
-    # Add MELD if creatinine provided
     if creatinine is not None:
-        if creatinine < 0:
-            raise ValueError("Creatinine must be non-negative")
-        meld = calculate_meld(bilirubin, inr, creatinine)
-        result["meld"] = meld
+        result["meld"] = calculate_meld(bilirubin, inr, creatinine, dialysis=dialysis)
+    elif dialysis:
+        raise ValueError("Creatinine is required when dialysis is specified")
 
     return result
 
 
-def _recommendation(cls: str, score: int) -> str:
-    """Generate clinical recommendation based on Child-Pugh class."""
-    if cls == "A":
-        return (
-            "Well-compensated liver disease. Candidates for surgical resection "
-            "and locoregional therapies. Regular surveillance recommended."
-        )
-    elif cls == "B":
-        return (
-            "Significant hepatic compromise. Surgical risk increased; consider "
-            "transplant evaluation. Locoregional therapies with caution. "
-            "Optimize medical management of complications."
-        )
-    else:
-        return (
-            "Decompensated liver disease. High surgical mortality. "
-            "Transplant evaluation strongly recommended if no contraindications. "
-            "Best supportive care if transplant ineligible."
-        )
-
-
-# ---------------------------------------------------------------------------
-# Batch processing
-# ---------------------------------------------------------------------------
-
 def process_batch(input_csv: str, output_csv: str) -> int:
-    """Process a CSV of patients and write scored results."""
-    with open(input_csv, mode="r", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
+    """Score rows from a CSV and write results plus a per-row error field."""
+    input_path = Path(input_csv)
+    output_path = Path(output_csv)
+    with input_path.open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
         fieldnames = list(reader.fieldnames or [])
+        required = {"bilirubin", "albumin", "inr"}
+        missing = sorted(required.difference(fieldnames))
+        if missing:
+            raise ValueError(f"Missing required CSV column(s): {', '.join(missing)}")
         rows = list(reader)
 
-    out_fields = fieldnames + [
-        "child_pugh_score", "child_pugh_class", "class_description",
-        "one_year_survival_pct", "clinical_recommendation",
+    added_fields = [
+        "child_pugh_score",
+        "child_pugh_class",
+        "class_description",
+        "one_year_survival_pct",
+        "legacy_meld_score",
+        "error",
     ]
+    out_fields = fieldnames + [name for name in added_fields if name not in fieldnames]
     out_rows = []
-    for r in rows:
-        try:
-            creat = float(r["creatinine"]) if r.get("creatinine") else None
-            res = calculate_child_pugh(
-                bilirubin=float(r["bilirubin"]),
-                albumin=float(r["albumin"]),
-                inr=float(r["inr"]),
-                ascites=r.get("ascites", "none"),
-                encephalopathy=r.get("encephalopathy", "none"),
-                creatinine=creat,
-            )
-            row_dict = dict(r)
-            row_dict["child_pugh_score"] = res["child_pugh_score"]
-            row_dict["child_pugh_class"] = res["child_pugh_class"]
-            row_dict["class_description"] = res["class_description"]
-            row_dict["one_year_survival_pct"] = res["one_year_survival_pct"]
-            row_dict["clinical_recommendation"] = res["clinical_recommendation"]
-        except (ValueError, KeyError) as e:
-            row_dict = dict(r)
-            row_dict["child_pugh_score"] = f"ERROR: {e}"
-            row_dict["child_pugh_class"] = ""
-            row_dict["class_description"] = ""
-            row_dict["one_year_survival_pct"] = ""
-            row_dict["clinical_recommendation"] = ""
-        out_rows.append(row_dict)
 
-    with open(output_csv, mode="w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=out_fields)
+    for source in rows:
+        row = dict(source)
+        try:
+            creat_text = (row.get("creatinine") or "").strip()
+            dialysis_text = (row.get("dialysis") or "").strip().lower()
+            dialysis = dialysis_text in {"1", "true", "yes", "y"}
+            result = calculate_child_pugh(
+                bilirubin=float(row["bilirubin"]),
+                albumin=float(row["albumin"]),
+                inr=float(row["inr"]),
+                ascites=row.get("ascites") or "none",
+                encephalopathy=row.get("encephalopathy") or "none",
+                creatinine=float(creat_text) if creat_text else None,
+                dialysis=dialysis,
+            )
+            row.update(
+                child_pugh_score=result["child_pugh_score"],
+                child_pugh_class=result["child_pugh_class"],
+                class_description=result["class_description"],
+                one_year_survival_pct=result["one_year_survival_pct"],
+                legacy_meld_score=result.get("meld", {}).get("meld_score", ""),
+                error="",
+            )
+        except (TypeError, ValueError, KeyError) as exc:
+            row.update(
+                child_pugh_score="",
+                child_pugh_class="",
+                class_description="",
+                one_year_survival_pct="",
+                legacy_meld_score="",
+                error=str(exc),
+            )
+        out_rows.append(row)
+
+    with output_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=out_fields, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(out_rows)
 
-    print(f"Processed {len(out_rows)} records -> {output_csv}")
     return len(out_rows)
 
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-
-def main(argv=None):
-    parser = argparse.ArgumentParser(
-        description="Child-Pugh-Turcotte (CPT) Score Calculator for Liver Disease Severity"
-    )
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Child-Pugh-Turcotte score calculator")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    # Single evaluation
-    sp = subparsers.add_parser("single", help="Evaluate a single patient")
-    sp.add_argument("--bilirubin", type=float, required=True,
-                    help="Serum bilirubin (mg/dL)")
-    sp.add_argument("--albumin", type=float, required=True,
-                    help="Serum albumin (g/dL)")
-    sp.add_argument("--inr", type=float, required=True,
-                    help="International Normalized Ratio")
-    sp.add_argument("--ascites", default="none",
-                    choices=["none", "mild/controlled", "moderate-severe"],
-                    help="Ascites severity (default: none)")
-    sp.add_argument("--encephalopathy", default="none",
-                    choices=["none", "grade I-II", "grade III-IV"],
-                    help="Encephalopathy grade (default: none)")
-    sp.add_argument("--creatinine", type=float, default=None,
-                    help="Serum creatinine (mg/dL) for MELD calculation")
+    single = subparsers.add_parser("single", help="Evaluate one set of values")
+    single.add_argument("--bilirubin", type=float, required=True, help="Total bilirubin (mg/dL)")
+    single.add_argument("--albumin", type=float, required=True, help="Albumin (g/dL)")
+    single.add_argument("--inr", type=float, required=True, help="International Normalized Ratio")
+    single.add_argument("--ascites", choices=["none", "mild/controlled", "moderate-severe"], default="none")
+    single.add_argument("--encephalopathy", choices=["none", "grade I-II", "grade III-IV"], default="none")
+    single.add_argument("--creatinine", type=float, help="Creatinine (mg/dL) for legacy MELD")
+    single.add_argument("--dialysis", action="store_true", help="Use creatinine 4.0 mg/dL in legacy MELD")
 
-    # Batch processing
-    bp = subparsers.add_parser("batch", help="Batch process CSV file")
-    bp.add_argument("-i", "--input", required=True, help="Input CSV file")
-    bp.add_argument("-o", "--output", default="results.csv", help="Output CSV file")
+    batch = subparsers.add_parser("batch", help="Process a CSV file")
+    batch.add_argument("-i", "--input", required=True, help="Input CSV path")
+    batch.add_argument("-o", "--output", default="results.csv", help="Output CSV path")
+    return parser
 
+
+def main(argv: Optional[list[str]] = None) -> int:
+    parser = build_parser()
     args = parser.parse_args(argv)
-
-    if args.command == "single":
-        result = calculate_child_pugh(
-            bilirubin=args.bilirubin,
-            albumin=args.albumin,
-            inr=args.inr,
-            ascites=args.ascites,
-            encephalopathy=args.encephalopathy,
-            creatinine=args.creatinine,
-        )
-        print(json.dumps(result, indent=2))
-    elif args.command == "batch":
-        process_batch(args.input, args.output)
+    try:
+        if args.command == "single":
+            result = calculate_child_pugh(
+                args.bilirubin,
+                args.albumin,
+                args.inr,
+                args.ascites,
+                args.encephalopathy,
+                args.creatinine,
+                args.dialysis,
+            )
+            print(json.dumps(result, indent=2, sort_keys=True))
+        else:
+            count = process_batch(args.input, args.output)
+            print(f"Processed {count} record(s) -> {args.output}")
+    except (OSError, ValueError) as exc:
+        parser.exit(2, f"error: {exc}\n")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

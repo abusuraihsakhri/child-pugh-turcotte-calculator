@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Browser-based Child-Pugh-Turcotte score calculator with optional legacy MELD comparison.">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Child-Pugh-Turcotte Calculator</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Hepatology reference calculator</p>
+        <h1>Child-Pugh-Turcotte</h1>
+      </div>
+      <button id="themeToggle" class="icon-button" type="button" aria-label="Toggle color theme">◐</button>
+    </header>
+
+    <section class="calculator-card" aria-labelledby="calculator-heading">
+      <div class="section-heading">
+        <div>
+          <h2 id="calculator-heading">Clinical inputs</h2>
+          <p>Conventional five-component Child-Pugh scoring.</p>
+        </div>
+        <span class="privacy-chip">Runs locally</span>
+      </div>
+
+      <form id="scoreForm" novalidate>
+        <div class="grid inputs-grid">
+          <label>Bilirubin <span>mg/dL</span><input id="bilirubin" name="bilirubin" type="number" min="0" step="0.1" value="1.5" required></label>
+          <label>Albumin <span>g/dL</span><input id="albumin" name="albumin" type="number" min="0.1" step="0.1" value="4.0" required></label>
+          <label>INR <input id="inr" name="inr" type="number" min="0.1" step="0.1" value="1.2" required></label>
+          <label>Ascites<select id="ascites" name="ascites"><option value="none">None</option><option value="mild/controlled">Mild / controlled</option><option value="moderate-severe">Moderate / severe</option></select></label>
+          <label>Encephalopathy<select id="encephalopathy" name="encephalopathy"><option value="none">None</option><option value="grade I-II">Grade I–II</option><option value="grade III-IV">Grade III–IV</option></select></label>
+          <label>Creatinine <span>mg/dL · optional</span><input id="creatinine" name="creatinine" type="number" min="0.1" step="0.1" placeholder="Legacy MELD"></label>
+        </div>
+
+        <div class="form-actions">
+          <label class="check"><input id="dialysis" name="dialysis" type="checkbox"> Dialysis (legacy MELD rule)</label>
+          <button class="primary" type="submit">Calculate</button>
+        </div>
+        <p id="errorMessage" class="error" role="alert" aria-live="polite"></p>
+      </form>
+    </section>
+
+    <section id="results" class="results-card" aria-live="polite">
+      <div class="score-block">
+        <span>Child-Pugh score</span>
+        <strong id="scoreValue">5</strong>
+        <small>/ 15</small>
+      </div>
+      <div class="class-block">
+        <span>Class</span>
+        <strong id="classValue">A</strong>
+        <p id="classText">Lower Child-Pugh severity class</p>
+      </div>
+      <div class="component-block">
+        <span>Component points</span>
+        <div id="componentPoints" class="points" aria-label="Component scores"></div>
+      </div>
+      <div id="meldBlock" class="meld-block hidden">
+        <span>Legacy MELD (2001)</span>
+        <strong id="meldValue">—</strong>
+        <small>Not the current OPTN allocation MELD</small>
+      </div>
+    </section>
+
+    <footer>
+      <p>Reference use only. This tool does not replace clinical judgment and does not calculate the current OPTN allocation MELD.</p>
+    </footer>
+  </main>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,52 +1,58 @@
-# Child-Pugh-Turcotte (CPT) Score & MELD Liver Disease Calculator
+# Child-Pugh-Turcotte Calculator
 
-> **Domain:** Hepatology, Gastroenterology & Liver Transplantation  
-> **Clinical Guidelines & Standards:** Child & Turcotte (Surgery 1964), Pugh et al. (Br J Surg 1973), AASLD Cirrhosis & Portal Hypertension Guidelines, EASL Clinical Practice Guidelines, Kamath et al. (Hepatology 2001, MELD formula)
+A compact reference calculator for the conventional Child-Pugh-Turcotte score used to classify chronic liver disease severity. The repository also provides a command-line interface and CSV batch processing.
 
----
+## Features
 
-## 📖 Clinical Overview
+- Calculates the five-component Child-Pugh score (5–15) and class (A, B, or C).
+- Shows each component's point contribution.
+- Optionally calculates the legacy 2001 MELD formula for comparison, including the conventional 4.0 mg/dL creatinine ceiling and dialysis rule.
+- Processes CSV files with per-row validation errors rather than failing an entire batch.
+- Provides a static browser interface with light/dark themes and no server-side data processing.
 
-The **Child-Pugh-Turcotte (CPT) Calculator** stratifies chronic liver disease severity and cirrhosis prognosis. It evaluates five objective biochemical and subjective physical parameters (Total Bilirubin, Serum Albumin, International Normalized Ratio / Prothrombin Time, Ascites, and Hepatic Encephalopathy) to classify disease into Class A, B, or C, predicting 1-year and 2-year perioperative and overall survival. Additionally, it computes the Model for End-Stage Liver Disease (MELD) score when Serum Creatinine is available.
+Clinical scope: this is a reference implementation, not a diagnostic or treatment system. The optional MELD output is the historical 2001 formula and is not the current OPTN liver-allocation MELD. Current OPTN MELD calculations use additional variables and policy-specific rules; use the official OPTN calculator for allocation decisions.
 
-### Child-Pugh Scoring System
+## Child-Pugh scoring
 
-| Clinical / Laboratory Parameter | 1 Point | 2 Points | 3 Points |
-|:---|:---:|:---:|:---:|
-| **Total Bilirubin (mg/dL)** | $< 2.0$ | $2.0 - 3.0$ | $> 3.0$ |
-| *(In PBC / PSC / Cholestatic)* | $< 4.0$ | $4.0 - 10.0$ | $> 10.0$ |
-| **Serum Albumin (g/dL)** | $> 3.5$ | $2.8 - 3.5$ | $< 2.8$ |
-| **INR (Prothrombin Time prolongation)** | $< 1.7$ ($< 4\text{s}$) | $1.7 - 2.3$ ($4 - 6\text{s}$) | $> 2.3$ ($> 6\text{s}$) |
-| **Ascites** | None | Mild / Diuretic-controlled | Moderate to Severe / Refractory |
-| **Hepatic Encephalopathy** | None | Grade I – II | Grade III – IV |
+| Component | 1 point | 2 points | 3 points |
+| --- | --- | --- | --- |
+| Bilirubin (mg/dL) | <2.0 | 2.0–3.0 | >3.0 |
+| Albumin (g/dL) | >3.5 | 2.8–3.5 | <2.8 |
+| INR | <1.7 | 1.7–2.3 | >2.3 |
+| Ascites | None | Mild / controlled | Moderate / severe |
+| Encephalopathy | None | Grade I–II | Grade III–IV |
 
-### Classification & Survival
+Class A = 5–6 points, Class B = 7–9, and Class C = 10–15.
 
-| Child-Pugh Class | Point Total | 1-Year Actuarial Survival | 2-Year Actuarial Survival | Perioperative Mortality (Abdominal Surgery) |
-|:---:|:---:|:---:|:---:|:---:|
-| **Class A** | 5 – 6 | 100% | 85% | ~10% |
-| **Class B** | 7 – 9 | 80% | 60% | ~30% |
-| **Class C** | 10 – 15 | 45% | 35% | ~70% – 80% |
+## CLI
 
----
+Single calculation:
 
-## 💻 CLI Quickstart & Usage
+    python cli.py single --bilirubin 2.5 --albumin 3.0 --inr 1.9 --ascites mild/controlled --encephalopathy "grade I-II" --creatinine 1.5
 
-### 1. Evaluate Individual Patient
-```bash
-python cli.py single --bilirubin 2.5 --albumin 3.0 --inr 1.9 --ascites mild/controlled --encephalopathy "grade I-II" --creatinine 1.5
-```
+Batch processing:
 
-### 2. Batch Process Cirrhosis Patient CSV Dataset
-```bash
-python cli.py batch -i sample.csv -o out_results.csv
-```
+    python cli.py batch -i sample.csv -o results.csv
 
----
+Required CSV columns are bilirubin, albumin, and inr. Ascites, encephalopathy, creatinine, and dialysis are optional.
 
-## 🧪 Verification & Testing
+## Testing
 
-Execute comprehensive unit tests via pytest:
-```bash
-python -m pytest -p no:zarr
-```
+    python -m pip install pytest==9.0.2
+    python -m pytest
+    python -m compileall -q child_pugh.py cli.py tests
+    node --test tests/web.test.mjs
+
+The runtime calculator has no third-party Python dependencies.
+
+## Privacy and browser support
+
+The GitHub Pages application performs calculations entirely in the browser. It does not upload clinical values or store them; only the selected light/dark theme is retained in browser storage. Current desktop and mobile versions of Chrome, Edge, Firefox, and Safari are supported.
+
+## Technology
+
+Python 3.10+ for CLI/batch use; HTML, CSS, and JavaScript for the static browser application; GitHub Actions for CI and Pages deployment.
+
+## License
+
+MIT. See LICENSE.
