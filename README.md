@@ -1,5 +1,7 @@
 # Child-Pugh-Turcotte Calculator
 
+### [Open the Live Application →](https://abusuraihsakhri.github.io/child-pugh-turcotte-calculator/)
+
 A compact reference calculator for the conventional Child-Pugh-Turcotte score used to classify chronic liver disease severity. The repository also provides a command-line interface and CSV batch processing.
 
 ## Features
